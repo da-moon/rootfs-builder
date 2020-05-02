@@ -11,7 +11,7 @@ readonly default_time_zone="America/Toronto"
 readonly default_wifi_ssid="Pixel C"
 readonly default_wifi_password="connectme!"
 readonly default_user="pixel"
-
+readonly default_user_id="1000"
 
 
 function timezone_setup(){
@@ -435,19 +435,20 @@ function build_debian(){
         log_info "leaving chroot"
         teardown_mounts "$root"  
         chown -R 0:0 "$root/"
-        chown -R 1000:1000 "$root/home/$default_user" || true
-        chown -R 1000:1000 "$root/home/alarm" || true
-        chmod +s "$root/usr/bin/chfn"
-        chmod +s "$root/usr/bin/newgrp"
-        chmod +s "$root/usr/bin/passwd"
-        chmod +s "$root/usr/bin/chsh"
-        chmod +s "$root/usr/bin/gpasswd"
-        chmod +s "$root/bin/umount"
-        chmod +s "$root/bin/mount"
-        chmod +s "$root/bin/su"
+        chown -R "$default_user_id":"$default_user_id" "$root/home/$default_user" || true
+        chown -R "$default_user_id":"$default_user_id" "$root/home/alarm" || true
+        chmod +s "$root/usr/bin/chfn" || true
+        chmod +s "$root/usr/bin/newgrp" || true
+        chmod +s "$root/usr/bin/passwd" || true
+        chmod +s "$root/usr/bin/chsh" || true
+        chmod +s "$root/usr/bin/gpasswd" || true
+        chmod +s "$root/bin/umount" || true
+        chmod +s "$root/bin/mount" || true
+        chmod +s "$root/bin/su" || true
         tar_archive "$root"
         unset DEBIAN_FRONTEND
         unset DEBCONF_NONINTERACTIVE_SEEN
+        # rm -rf "$root"
         log_info "RootFS generation completed and stored at '$root.tar.gz'"
 }
 
