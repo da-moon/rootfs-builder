@@ -3,6 +3,7 @@
 # shellcheck source=./lib/fast_apt/fast_apt.sh
 source "$(cd "$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]+x}")")")" && pwd)/lib/fast_apt/fast_apt.sh"
 
+# debian rootfs builder 
 readonly -a supported_archs=("aarch64")
 readonly -a supported_codenames=("buster" "stretch" "jessie")
 readonly default_root="/tmp/rootfs-buil/debian-${supported_codenames[0]}"
@@ -56,6 +57,8 @@ function prepare_rootfs(){
 
     update-binfmts --enable "qemu-${arch}"
     log_info "crearting rootfs directory '$root'..."
+    teardown_mounts "$root"
+    rm "$root.tar.gz" 
     mkdir -p "$root"
     log_info "setting up keyring for debian "$code_name"..."
     qemu-debootstrap --include=debian-archive-keyring --arch arm64 "$code_name" "$root" || true
@@ -74,8 +77,9 @@ function teardown_mounts(){
     log_info "tearing down mounts..."
     local root="$1"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
-    umount -lvf "$root/dev/ptr" > /dev/null 2>&1 || true
-    umount -lvf "$root/"* > /dev/null 2>&1 || true
+    # umount -lvf "$root/dev/ptr" > /dev/null 2>&1 || true
+    # umount -lvf "$root/"* > /dev/null 2>&1 || true
+    find $root -type d -exec umount -lvf {} \; || true 
 }
 
 function enable_systemd_services(){
@@ -239,13 +243,12 @@ function install_packages(){
     chroot "$root" apt-get --yes clean
     chroot "$root" apt-get --yes autoclean
     chroot "$root" apt-get --yes autoremove
+    chroot "$root" rm -f /etc/apt/sources-fast.list
 }
 function setup_user(){
     local -r root="$1"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     local commands=()
-    # chroot "$root" getent passwd "$default_user" > /dev/null 
-    # if [ $? -eq 0 ]; then
     log_info "deleting user '$default_user' in case it exists.possibly rememnants of faulty partial chroot setup."
     commands+=("")
     chroot "$root" deluser --remove-home "${default_user}" > /dev/null 2>&1 || true
@@ -344,13 +347,17 @@ function cleanup(){
     local -r root="$1"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     local -r target="$root/var/cache"
-    rm -rf "$target"
-    mkdir -p "$target"
+    chroot "$root" rm -rf "$target"
+    chroot "$root" mkdir -p "$target"
 }
 function tar_archive(){
     local -r root="$1"
     log_info "archiving '$root' to '$root.tar.gz'"
-    tar -cpzf "$root.tar.gz" "$root"
+    pushd "$root" >/dev/null 2>&1
+        tar -zcvf "$root.tar.gz" .
+    [[ "$?" != 0 ]] && popd
+    popd >/dev/null 2>&1
+    rm -rf "$root"
 }
 ############################################# start ###############################################
 function build_debian(){
@@ -430,7 +437,7 @@ function build_debian(){
         keyboard_setup "$root"
         wifi_setup "$root" "${wifi_ssid}" "${wifi_password}" 
         setup_alarm "$root"
-        setup_bcm4354 "$root"
+        # setup_bcm4354 "$root"
         cleanup "$root"
         log_info "leaving chroot"
         teardown_mounts "$root"  
@@ -448,7 +455,7 @@ function build_debian(){
         tar_archive "$root"
         unset DEBIAN_FRONTEND
         unset DEBCONF_NONINTERACTIVE_SEEN
-        # rm -rf "$root"
+        # 
         log_info "RootFS generation completed and stored at '$root.tar.gz'"
 }
 
