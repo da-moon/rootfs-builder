@@ -1,0 +1,95 @@
+## Maintained by Strit ##
+
+# Minimal packages
+sudo
+parted
+openssh
+haveged
+xorg-server
+xorg-xinit
+inxi
+ncdu
+nano
+dhcpcd
+man-pages
+man-db
+ntfs-3g
+zswap-arm
+
+# Sound, Video and bluetooth
+alsa-utils
+smplayer
+pulseaudio-alsa
+pulseaudio-bluetooth
+
+# Display Manager
+sddm
+sddm-kcm
+
+# Plasma packages
+bluedevil
+breeze
+drkonqi
+kde-gtk-config
+kinfocenter
+kscreen
+kscreenlocker
+ksysguard
+kwallet-pam
+kwayland-integration
+#plasma-wayland-session
+kwin
+plasma-desktop
+plasma-nm
+plasma-pa
+plasma-workspace
+powerdevil
+systemsettings
+user-manager
+plasma-vault
+
+# KDE applications
+dolphin
+dolphin-plugins
+kate
+konsole
+ark
+okular
+gwenview
+spectacle
+
+# Themes
+breath2-icon-themes
+gtk-theme-breath
+plasma5-themes-breath2
+sddm-breath2-theme
+manjaro-arm-wallpapers
+breeze-gtk
+manjaro-icons
+
+
+# Office suite
+libreoffice-fresh
+
+# Browser
+firefox
+firefox-ublock-origin
+
+# Package Manager
+pamac-gtk
+pamac-tray-appindicator
+
+# Fonts
+ttf-bitstream-vera
+noto-fonts
+
+# Other packages
+openresolv
+manjaro-settings-manager
+manjaro-settings-manager-kcm
+wget
+tlp
+manjaro-hotfixes
+xdg-user-dirs
+gtk3-nocsd
+networkmanager-openvpn

@@ -1,0 +1,95 @@
+## Maintained by Strit ##
+
+# Minimal packages
+sudo
+parted
+openssh
+haveged
+inxi
+xorg-server
+xorg-xinit
+ncdu
+nano
+dhcpcd
+man-pages
+man-db
+ntfs-3g
+zswap-arm
+
+# Sound, Video and bluetooth
+alsa-utils
+
+# Display Manager
+sddm
+sddm-breath2-theme
+
+# Plasma packages
+bluedevil
+breeze
+drkonqi
+#kde-gtk-config
+kinfocenter
+kscreen
+kscreenlocker
+ksysguard
+kwallet-pam
+kwayland-integration
+kwin
+plasma-desktop
+plasma-nm
+plasma-pa
+plasma-workspace
+powerdevil
+systemsettings
+
+#CoreApps
+coreaction
+corearchiver
+corefm
+coregarage
+corehunt
+coreimage
+coreinfo
+corekeyboard
+corepad
+corepaint
+corepdf
+corepins
+corerenamer
+coreshot
+corestats
+corestuff
+coreterminal
+coretime
+coretoppings
+coreuniverse
+
+
+
+# Fonts
+cantarell-fonts
+ttf-bitstream-vera
+
+# Browser
+falkon
+
+# Themes
+breath2-icon-themes
+plasma5-themes-breath2
+gtk-theme-breath
+manjaro-arm-wallpapers
+
+# Office suite
+calligra
+
+# Package Manager
+#pamac-qt #when it's ready
+
+# Other applications
+openresolv
+manjaro-settings-manager
+wget
+tlp
+manjaro-hotfixes
+xdg-user-dirs
+xf86-video-fbturbo-git

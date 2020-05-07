@@ -14,6 +14,15 @@ readonly default_wifi_ssid="Pixel C"
 readonly default_wifi_password="connectme!"
 readonly default_user="pixel"
 readonly default_user_id="1000"
+# "minimal"   "Minimal Edition            (only CLI)"
+# "kde-plasma" "Full KDE/Plasma Desktop    (full featured)" 
+# "xfce"      "Full XFCE desktop and apps (full featured)" 
+# "mate"      "Full MATE desktop and apps (lightweight)" 
+# "lxqt"      "Full LXQT Desktop and apps (lightweight)" 
+# "i3"        "Mininal i3 WM with apps    (very light)" 
+# "cubocore"  "QT based Desktop           (lightweight)" 
+# "gnome"     "Full Gnome desktop and apps (EXPERIMANTAL)"
+readonly edition="kde-plasma"
 export container="arch-builder"
 export NSPAWN="systemd-nspawn --machine=$container -q --resolv-conf=copy-host --timezone=off -D"
 function clean_up_container(){
@@ -33,6 +42,11 @@ function prepare_rootfs(){
     local -r arch="$2"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     assert_not_empty "arch" "${arch+x}" "architecture is needed"
+    if  file_exists "$root.tar.gz"; then
+        log_info "cleaning up legacy archive at $root.tar.gz"
+        rm "$root.tar.gz"
+    fi
+
     log_info "generating machine ID ..."
     rm -f /etc/machine-id /var/lib/dbus/machine-id
     dbus-uuidgen --ensure=/etc/machine-id
@@ -77,12 +91,12 @@ function prepare_rootfs(){
     rm -rf "$root/../pkg-cache"
     mkdir -p "$root"
     pushd "/tmp/" >/dev/null 2>&1
+        rm -f "ArchLinuxARM-${arch}-latest.tar.gz"
         if  ! file_exists "ArchLinuxARM-${arch}-latest.tar.gz"; then
             log_info "downloading latest arch rootfs for ${arch} architecture  '$root'..."
             local -r download_list="/tmp/arch-${arch}.list"
             # using manjaro rootfs 
-            # local -r link="https://osdn.net/projects/manjaro-arm/storage/.rootfs/Manjaro-ARM-$arch-latest.tar.gz"
-            local -r link="http://os.archlinuxarm.org/os/ArchLinuxARM-${arch}-latest.tar.gz"
+            local -r link="https://osdn.net/projects/manjaro-arm/storage/.rootfs/Manjaro-ARM-$arch-latest.tar.gz"
             echo "$link" >"$download_list"
             echo " out=ArchLinuxARM-${arch}-latest.tar.gz" >>"$download_list"
             if  file_exists "$download_list"; then
@@ -92,38 +106,18 @@ function prepare_rootfs(){
         if  file_exists "ArchLinuxARM-${arch}-latest.tar.gz"; then
             bsdtar -xpf "ArchLinuxARM-${arch}-latest.tar.gz" -C "$root/"
             # TODO delete after completion
-            # rm "ArchLinuxARM-${arch}-latest.tar.gz"
+            rm "ArchLinuxARM-${arch}-latest.tar.gz"
         fi
     [[ "$?" != 0 ]] && popd
     popd >/dev/null 2>&1
-    # log_info "changing getty exec start to allow for systemd-nspawn passwordless tty"
-    # sed -i.bak "s/.*ExecStart.*/ExecStart=-\/sbin\/agetty --noclear --autologin root --keep-baud console 115200,38400,9600 \$TERM/g" "$root/usr/lib/systemd/system/getty@.service"
-    # log_info "allow logging in as root with no password via tty (systemd-nspawn)"
-    # sed -i.bak - '/^root:/ s|\*||' "$root/etc/shadow"
-
 }
-# function setup_nameserver(){
-#     local -r root="$1"
-#     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
-#  log_info "Setting up name servers"
-#     local -r target="/etc/resolv.conf"
-#     local -r dir="$(dirname "$target")"
-#     log_info "creating parent directory $dir"
-#     $NSPAWN "$root"  mkdir -p "$dir"
-#     $NSPAWN "$root" cat > "$target" <<EOF
-# nameserver 8.8.8.8
-# nameserver 77.88.8.8
-# nameserver 8.8.4.4
-# nameserver 77.88.8.1
-# EOF
-# }
 function install_packages(){
     local -r root="$1"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     local -r main_dependancies=(
         # "xf86-video-fbdev "
-        # "manjaro-system"
-        # "manjaro-release" 
+        "manjaro-system"
+        "manjaro-release" 
         "base"
         "bootsplash-systemd"
         "systemd"
@@ -157,51 +151,33 @@ function install_packages(){
         "uboot-tools"
         "dropbear"
     )
-
+    
+    local -r pkg_edition=$(grep "^[^#;]" "$root/../../distros/manjaro/editions/$edition" | awk '{print $1}')
     log_info "Setting up keyrings..."
-    # cp "$root/../../distros/arch/pacman-gpg/"* "$root/etc/pacman.d/gnupg"
-    $NSPAWN "$root" pacman-key --init #1> /dev/null 2>&1
-    # $NSPAWN "$root" pacman-key --populate archlinux archlinuxarm manjaro manjaro-arm #1> /dev/null 2>&1
-    $NSPAWN "$root"  pacman-key --populate archlinuxarm  #1> /dev/null 2>&1
+    $NSPAWN "$root" pacman-key --init 1> /dev/null 2>&1
+    $NSPAWN "$root" pacman-key --populate archlinux archlinuxarm manjaro manjaro-arm 1> /dev/null 2>&1
     log_info "binding pkg-cache..."
     mkdir -p "$root/../pkg-cache"
     mount -o bind "$root/../pkg-cache" "$root/var/cache/pacman/pkg"
-    # log_info "disabling systemd-resolved service ..."
-    # $NSPAWN "$root" systemctl disable --now systemd-resolved
-    # timedatectl set-timezone
-    # log_info "updating package list ..."
+    log_info "Generating mirrorlist..."
+    $NSPAWN "$root" pacman-mirrors -f5 1> /dev/null 2>&1
+    log_info "updating package list ..."
     $NSPAWN "$root" pacman -Syy
-    # log_info "download base dependancies ..."
-    # $NSPAWN "$root" pacman -S --needed reflector rsync 
     log_info "setting locals to en_US.UTF-8"
     $NSPAWN "$root" locale-gen en_US.UTF-8
-    # log_info "setting up auto synchronization of time"
-    # $NSPAWN "$root" timedatectl set-ntp true
-
-    # log_info "Generating mirrorlist..."
-    # manjaro specific
-    $NSPAWN "$root" pacman-mirrors -f10 #1> /dev/null 2>&1
     log_info "installing packages ..."
-    # $NSPAWN "$root" pacman -Syu
     $NSPAWN "$root" pacman -Syyu --needed --noconfirm "${main_dependancies[@]}" 
+    $NSPAWN "$root" pacman -Syyu --needed --noconfirm $pkg_edition
     log_info "Setting up system settings..."
-    $NSPAWN "$root" chmod u+s /usr/bin/ping #1> /dev/null 2>&1
+    # $NSPAWN "$root" chmod u+s /usr/bin/ping #1> /dev/null 2>&1
     # rm -f "$root/etc/ssl/certs/ca-certificates.crt"
     # rm -f "$root/etc/ca-certificates/extracted/tls-ca-bundle.pem"
     # cp -a "/etc/ssl/certs/ca-certificates.crt" "$root/etc/ssl/certs/"
     # cp -a "/etc/ca-certificates/extracted/tls-ca-bundle.pem" $root/etc/ca-certificates/extracted/
 
-    $NSPAWN "$root" sed -i "s/.*PasswordAuthentication.*/PasswordAuthentication yes/g" /etc/ssh/sshd_config
-    $NSPAWN "$root" sed -i "s/.*PermitRootLogin.*/PermitRootLogin yes/g" /etc/ssh/sshd_config
+     sed -i "s/.*PasswordAuthentication.*/PasswordAuthentication yes/g" "$root/etc/ssh/sshd_config"
+    sed -i "s/.*PermitRootLogin.*/PermitRootLogin yes/g" "$root/etc/ssh/sshd_config"
 
-    log_info "Cleaning install for unwanted files..."
-    umount "$root/root/var/cache/pacman/pkg"
-    rm -rf "$root/usr/bin/qemu-aarch64-static"
-    rm -rf "$root/var/cache/pacman/pkg/*"
-    rm -rf "$root/var/log/*"
-    rm -rf "$root/etc/*.pacnew"
-    rm -rf "$root/usr/lib/systemd/system/systemd-firstboot.service"
-    rm -rf "$root/etc/machine-id"
 }
 function setup_user(){
     local -r root="$1"
@@ -210,7 +186,7 @@ function setup_user(){
     log_info "deleting user '$default_user' in case it exists.possibly rememnants of faulty partial chroot setup."
     commands+=("")
     $NSPAWN  "$root" deluser --remove-home "${default_user}" > /dev/null 2>&1 || true
-    $NSPAWN  "$root" useradd -l -G sudo,adm -md "/home/$default_user" -s /bin/bash -p password "$default_user"
+    $NSPAWN  "$root" useradd -l -G wheel,sys,audio,input,video,storage,lp,network,users,power,sudo,adm -md "/home/$default_user" -s /bin/bash -p password "$default_user"
 }
 # TODO repeat
 function hostname_setup(){
@@ -247,16 +223,33 @@ function enable_systemd_services(){
     local -r root="$1"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     shift;
-    $NSPAWN "$root" systemctl daemon-reload
     $NSPAWN "$root" systemctl enable getty.target haveged.service 
-    local -r services="$1"
-    for i in "${services[@]}"; do
-        log_info "enabling service $i"
-        $NSPAWN "$root" systemctl enable --now "$i"
-    done
+    
+    local -r service_edition=$(grep "^[^#;]" "$root/../../distros/manjaro/editions/$edition" | awk '{print $1}')
+    $NSPAWN "$root" systemctl enable $service_edition || true
     if [ -f "$root/usr/bin/xdg-user-dirs-update" ]; then
         $NSPAWN "$root" systemctl --global enable xdg-user-dirs-update.service 1> /dev/null 2>&1
     fi
+    local -r systemd_services=(
+        "sshd"
+        "NetworkManager"
+        "lightdm"
+        "bluetooth"
+        "dhcpcd"
+    )
+    # for i in "${systemd_services[@]}"; do
+        # log_info "enabling service $i"
+    # done
+    $NSPAWN "$root" systemctl enable "${systemd_services[@]}"  || true
+    $NSPAWN "$root" --user "$default_user" systemctl --user enable pulseaudio.service || true #1> /dev/null 2>&1
+
+}
+function setup_overlays(){
+    local -r root="$1"
+    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
+    shift;
+    log_info "setting up overlays for $edition"
+    cp -ap "$root/../../distros/manjaro/overlays/$edition"/* "$root"
 
 }
 # TODO repeat
@@ -348,7 +341,19 @@ function setup_bcm4354(){
     log_info "downloading $url"
     wget -O "$target" "$url"
 }
-
+function cleanup(){
+    local -r root="$1"
+    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
+    log_info "Cleaning install for unwanted files..."
+    # umount -l -v -f "$root/root/var/cache/pacman/pkg" || true
+    find "$root" -type d -exec umount -lvf {} || true 
+    $NSPAWN "$root" rm -f "/usr/bin/qemu-aarch64-static"
+    $NSPAWN "$root" rm -f "/var/cache/pacman/pkg/"* || true
+    $NSPAWN "$root" rm -f "/var/log/"*
+    $NSPAWN "$root" rm -f "/etc/"*.pacnew
+    $NSPAWN "$root" rm -f "/usr/lib/systemd/system/systemd-firstboot.service"
+    $NSPAWN "$root" rm -f "/etc/machine-id"
+}
 function tar_archive(){
     local -r root="$1"
     log_info "archiving '$root' to '$root.tar.gz'"
@@ -356,13 +361,11 @@ function tar_archive(){
         tar -zcvf "$root.tar.gz" .
     [[ "$?" != 0 ]] && popd
     popd >/dev/null 2>&1
+    # TODO dails due to device being busy
     rm -rf "$root"
 }
-    # pushd "$root" >/dev/null 2>&1
-    # [[ "$?" != 0 ]] && popd
-    # popd >/dev/null 2>&1
 ############################################# start ###############################################
-function build_arch(){
+function build_manjaro(){
     local arch="$1";
     if [[  $(string_is_empty_or_null "${arch+x}") ]]; then
         arch="${supported_archs[0]}"
@@ -396,11 +399,11 @@ function build_arch(){
         log_warn "wifi password was not given! Using default";
     fi
     shift;
-    umount "$root/root/var/cache/pacman/pkg" || true
+    # umount "$root/root/var/cache/pacman/pkg" || true
 
     echo "*******************************************************************************************"
     echo "*                                                                                         *"
-    log_info "Building Arch Linux Root File System In with systemd-nspawn"
+    log_info "Building Manjaro Linux Root File System In with systemd-nspawn"
     log_info "Architecture: $arch"
     log_info "Host Name: $host_name"
     log_info "timezone: $time_zone"
@@ -409,13 +412,7 @@ function build_arch(){
     echo "*                                                                                         *"
     echo "*******************************************************************************************"
 
-    local -r systemd_services=(
-        "sshd"
-        "NetworkManager"
-        "lightdm"
-        "bluetooth"
-        "dhcpcd"
-    )
+    
     if [[ ! -d "$root" ]]; then
         log_warn "root filesystem '$root' not found. creating ..."
         mkdir -p "$root"
@@ -423,20 +420,21 @@ function build_arch(){
     log_info "setting ownership of '$root' to '$UID'  "
     chown -R "$UID:$UID" "$root" || true >/dev/null 2>&1
     prepare_rootfs "$root" "$arch"
-    setup_nameserver "$root"
     hostname_setup "$root" "${host_name}"
     timezone_setup "$root" "${time_zone}"
     install_packages "$root"
-    setup_user "$root"
-    enable_systemd_services "$root" "${systemd_services[@]}"
+    enable_systemd_services "$root" 
+    setup_overlays "$root"
+    # TODO fix
+    # setup_user "$root"
     keyboard_setup "$root"
     wifi_setup "$root" "${wifi_ssid}" "${wifi_password}" 
     setup_alarm "$root"
     setup_bcm4354 "$root"
-
+    cleanup "$root"
     chown -R 0:0 "$root/"
-    chown -R "$default_user_id":"$default_user_id" "$root/home/$default_user" || true
-    chown -R "$default_user_id":"$default_user_id" "$root/home/alarm" || true
+    # chown -R "$default_user_id":"$default_user_id" "$root/home/$default_user" || true
+    # chown -R "$default_user_id":"$default_user_id" "$root/home/alarm" || true
     chmod +s "$root/usr/bin/chfn" || true
     chmod +s "$root/usr/bin/newgrp" || true
     chmod +s "$root/usr/bin/passwd" || true
@@ -535,7 +533,7 @@ function main() {
         shift
     done 
     clean_up_container
-    build_arch "$arch" "$root_dir" "$host_name" "$time_zone" "$wifi_ssid" "$wifi_password"
+    build_manjaro "$arch" "$root_dir" "$host_name" "$time_zone" "$wifi_ssid" "$wifi_password"
     exit
 }
 

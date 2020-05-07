@@ -1,0 +1,32 @@
+## Maintained by ?? ##
+
+# Minimal packages
+sudo
+parted
+openssh
+haveged
+inxi
+ncdu
+nano
+dhcpcd
+man-pages
+man-db
+ntfs-3g
+zswap-arm
+
+# Display Manager
+lightdm
+
+# Phosh packages
+gnome-session
+mutter
+phosh
+
+# Theming
+manjaro-arm-wallpapers
+
+# Other packages
+mesa
+gnome-keyring
+polkit
+xorg-server-xwayland

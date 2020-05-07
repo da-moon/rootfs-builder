@@ -1,0 +1,24 @@
+## Maintained by ?? ##
+
+# Minimal packages
+base
+sudo
+parted
+openssh
+haveged
+inxi
+nano
+dhcpcd
+man-pages
+man-db
+ntfs-3g
+zswap-arm
+
+# Server packages
+apache
+mariadb
+php
+php-apache
+php-fpm
+certbot-apache
+docker
