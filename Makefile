@@ -11,23 +11,25 @@ BUILD_TARGETS = $(DISTROS:%=build-%)
 UNMOUNT_TARGETS = $(DISTROS:%=unmount-%)
 CLEAN_TARGETS = $(DISTROS:%=clean-%)
 
-.PHONY: build clean unmount print
-.SILENT: build clean unmount  print
+.PHONY: build clean unmount target
+.SILENT: build clean unmount  target
+target:
+	- $(call print_running_target)
+	- $(info $(BUILD_TARGETS))
+	- $(call print_completed_target)
 
 .PHONY: $(BUILD_TARGETS)
 .SILENT: $(BUILD_TARGETS)
-$(BUILD_TARGETS): 
+$(BUILD_TARGETS): $(CLEAN_TARGETS)
 	- $(call print_running_target)
 	- $(eval name=$(@:build-%=%))
 	- $(eval command=$(PWD)$(PSEP)distros$(PSEP)$(name)$(PSEP)build.sh)
 	- chmod +x $(command)
 	- cat "distros/$(name)/logo"
+	- echo 
 	- $(eval command=$(command) --root-dir $(BUILD_DIR)$(PSEP)$(name))
 ifneq (${ARCH}, )
 	- $(eval command=${command} --arch '$(ARCH)')
-endif
-ifneq (${CODENAME}, )
-	- $(eval command=${command} --codename '$(CODENAME)')
 endif
 ifneq (${HOST_NAME}, )
 	- $(eval command=${command} --host-name '$(HOST_NAME)')

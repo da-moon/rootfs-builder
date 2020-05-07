@@ -1,17 +1,7 @@
 #!/bin/bash
 DISTRO_NAME="Arch Linux ARM"
 
-echo -e '
-           \e[H\e[2J
-          \e[0;36m.
-         \e[0;36m/ \
-        \e[0;36m/   \      \e[1;37m               #     \e[1;36m| *
-       \e[0;36m/^.   \     \e[1;37m a##e #%" a#"e 6##%  \e[1;36m| | |-^-. |   | \ /
-      \e[0;36m/  .-.  \    \e[1;37m.oOo# #   #    #  #  \e[1;36m| | |   | |   |  X
-     \e[0;36m/  (   ) _\   \e[1;37m%OoO# #   %#e" #  #  \e[1;36m| | |   | ^._.| / \ \e[0;37mTM
-    \e[1;36m/ _.~   ~._^\
-   \e[1;36m/.^         ^.\ \e[0;37mTM"
-'
+echo -e 
 
 if [ -z ${RFS_WIFI_SSID+x} ]; then
   echo "WIFI SSID not set! Using 'Pixel C'";

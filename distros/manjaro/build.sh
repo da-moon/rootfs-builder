@@ -3,30 +3,48 @@
 # shellcheck source=./lib/fast_apt/fast_apt.sh
 source "$(cd "$(dirname "$(dirname "$(dirname "${BASH_SOURCE[0]+x}")")")" && pwd)/lib/fast_apt/fast_apt.sh"
 
-# debian rootfs builder 
+# arch rootfs builder 
+# mirror list x86 https://www.archlinux.org/mirrorlist/all/
+
 readonly -a supported_archs=("aarch64")
-readonly -a supported_codenames=("buster" "stretch" "jessie")
-readonly default_root="/tmp/rootfs-build/debian-${supported_codenames[0]}"
+readonly default_root="/tmp/rootfs-build/arch-${supported_archs[0]}"
 readonly default_host_name="pixel-c"
 readonly default_time_zone="America/Toronto"
 readonly default_wifi_ssid="Pixel C"
 readonly default_wifi_password="connectme!"
 readonly default_user="pixel"
 readonly default_user_id="1000"
-
+export container="arch-builder"
+export NSPAWN="systemd-nspawn --machine=$container -q --resolv-conf=copy-host --timezone=off -D"
+function clean_up_container(){
+    machinectl kill "$container" || true;
+    sleep 1
+    machinectl stop "$container" || true;
+    sleep 1
+    machinectl poweroff "$container" || true;
+    sleep 1
+    machinectl terminate "$container" || true;
+    sleep 1
+}
 function prepare_rootfs(){
     log_info "preparing rootfs..."
     log_info "installing dependancies..."
     local -r root="$1"
     local -r arch="$2"
-    local -r code_name="$3"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     assert_not_empty "arch" "${arch+x}" "architecture is needed"
-    assert_not_empty "code_name" "${code_name+x}" "codename is needed"
+    log_info "generating machine ID ..."
+    rm -f /etc/machine-id /var/lib/dbus/machine-id
+    dbus-uuidgen --ensure=/etc/machine-id
+    dbus-uuidgen --ensure
     local -r packages=(
         "debootstrap"
         "binfmt-support"
         "qemu-user-static"
+        "aria2"
+        "bsdtar"
+        "openssl"
+        "systemd-container"
     )
     apt-get update
     apt-get install -y "${packages[@]}"
@@ -41,176 +59,160 @@ function prepare_rootfs(){
         [[ "$?" != 0 ]] && popd
         popd >/dev/null 2>&1
     fi
-
     update-binfmts --enable "qemu-${arch}"
-    log_info "crearting rootfs directory '$root'..."
-    teardown_mounts "$root"
-    rm -f "$root.tar.gz" 
+    local -r payload='kernel.unprivileged_userns_clone=1'
+    local -r dest="/etc/sysctl.d/nspawn.conf"
+    if [[ -f "$dest" ]]; then
+        if [[ -z $(grep "$payload" "$dest") ]]; then
+            log_info "enabling unprivileged user namespaces "
+            echo "$payload" >"$dest"
+            systemctl restart systemd-sysctl.service
+        fi
+        else
+        log_info "enabling unprivileged user namespaces "
+        echo "$payload" >"$dest"
+        systemctl restart systemd-sysctl.service
+    fi
+    rm -rf "$root"
+    rm -rf "$root/../pkg-cache"
     mkdir -p "$root"
-    log_info "setting up keyring for debian "$code_name"..."
-    qemu-debootstrap --include=debian-archive-keyring --arch arm64 "$code_name" "$root" || true
+    pushd "/tmp/" >/dev/null 2>&1
+        if  ! file_exists "ArchLinuxARM-${arch}-latest.tar.gz"; then
+            log_info "downloading latest arch rootfs for ${arch} architecture  '$root'..."
+            local -r download_list="/tmp/arch-${arch}.list"
+            # using manjaro rootfs 
+            # local -r link="https://osdn.net/projects/manjaro-arm/storage/.rootfs/Manjaro-ARM-$arch-latest.tar.gz"
+            local -r link="http://os.archlinuxarm.org/os/ArchLinuxARM-${arch}-latest.tar.gz"
+            echo "$link" >"$download_list"
+            echo " out=ArchLinuxARM-${arch}-latest.tar.gz" >>"$download_list"
+            if  file_exists "$download_list"; then
+                downloader "$download_list"
+            fi
+        fi
+        if  file_exists "ArchLinuxARM-${arch}-latest.tar.gz"; then
+            bsdtar -xpf "ArchLinuxARM-${arch}-latest.tar.gz" -C "$root/"
+            # TODO delete after completion
+            # rm "ArchLinuxARM-${arch}-latest.tar.gz"
+        fi
+    [[ "$?" != 0 ]] && popd
+    popd >/dev/null 2>&1
+    # log_info "changing getty exec start to allow for systemd-nspawn passwordless tty"
+    # sed -i.bak "s/.*ExecStart.*/ExecStart=-\/sbin\/agetty --noclear --autologin root --keep-baud console 115200,38400,9600 \$TERM/g" "$root/usr/lib/systemd/system/getty@.service"
+    # log_info "allow logging in as root with no password via tty (systemd-nspawn)"
+    # sed -i.bak - '/^root:/ s|\*||' "$root/etc/shadow"
 
 }
-function timezone_setup(){
-    local -r root="$1"
-    local -r zone="$2"
-    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
-    assert_not_empty "zone" "${zone+x}" "time zone must be set"
-    log_info "setting timezone to $zone"
-    local -r target="$root/etc/timezone"
-    local -r dir="$(dirname "$target")"
-    log_info "creating parent directory $dir"
-    mkdir -p "$dir"
-    echo "$zone" > "$target"
-}
-
-function setup_mounts(){
-    log_info "setting up mounts..."
-    local -r root="$1"
-    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
-    mount -t sysfs "sys" "$root/sys/"  || true
-    mount -t proc  "proc" "$root/proc/" || true
-    mount -o bind "/dev" "$root/dev/" || true
-    mount -o bind "/dev/pts" "$root/dev/pts" || true
-}
-function teardown_mounts(){
-    log_info "tearing down mounts..."
-    local root="$1"
-    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
-    # umount -lvf "$root/dev/ptr" > /dev/null 2>&1 || true
-    # umount -lvf "$root/"* > /dev/null 2>&1 || true
-    find $root -type d -exec umount -lvf {} \; || true 
-}
-
+# function setup_nameserver(){
+#     local -r root="$1"
+#     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
+#  log_info "Setting up name servers"
+#     local -r target="/etc/resolv.conf"
+#     local -r dir="$(dirname "$target")"
+#     log_info "creating parent directory $dir"
+#     $NSPAWN "$root"  mkdir -p "$dir"
+#     $NSPAWN "$root" cat > "$target" <<EOF
+# nameserver 8.8.8.8
+# nameserver 77.88.8.8
+# nameserver 8.8.4.4
+# nameserver 77.88.8.1
+# EOF
+# }
 function install_packages(){
-    log_info "installing base packages ..."
     local -r root="$1"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     local -r main_dependancies=(
-        "bash"
-        "bluez"
-        "sudo"
-        "binutils"
-        "network-manager"
+        # "xf86-video-fbdev "
+        # "manjaro-system"
+        # "manjaro-release" 
+        "base"
+        "bootsplash-systemd"
+        "systemd"
+        "systemd-libs"
         "lightdm"
         "lightdm-gtk-greeter"
-        "openbox"
-        "onboard"
-        "ssh" 
-        "net-tools" 
-        "ethtool" 
-        "wireless-tools" 
-        "init" 
-        "iputils-ping" 
-        "rsyslog" 
-        "bash-completion" 
-        "ifupdown" 
-        "systemd"
-        "time"
-        "htop"
-        "man-db" 
-        "lsof"
-        "aria2"
-        "apt-utils" 
-        "unzip" 
-        "build-essential" 
-        "software-properties-common"
-        "make" 
-        "vim" 
-        "nano" 
-        "ca-certificates"
-        "wget" 
-        "jq" 
-        "apt-transport-https" 
-        "parallel"
+        "binutils"
+        "make"
+        "noto-fonts"
+        "sudo"
+        "git"
         "gcc"
-        "g++"
-        "ufw"
-        "progress"
-        "bzip2"
-        "strace"
-        "tmux"
-        "zip"
+        "xorg-xinit"
+        "xorg-server"
+        "onboard"
+        "bluez"
+        "bluez-tools"
+        "bluez-utils"
+        "openbox"
+        "sudo"
+        "kitty"
+        "netctl"
+        "wpa_supplicant"
+        "dhcpcd"
+        "dialog"
+        "mesa"
+        "networkmanager"
+        "openssh"
+        "rsync"
+        "base-devel"
+        "uboot-tools"
+        "dropbear"
     )
-    chroot "$root" apt-get update
-    log_info "updating apt sources"
-    chroot "$root" apt-get update
-    log_info "updating installing netselect-apt"
-    chroot "$root" \
-            env -i \
-                HOME="/root" \
-                PATH="/bin:/usr/bin:/sbin:/usr/sbin" \
-                SHELL="/bin/bash" \
-                TERM="$TERM" \
-                DEBIAN_FRONTEND="noninteractive" \
-            apt-get --yes \
-                -o DPkg::Options::=--force-confdef \
-                install netselect-apt 
-    log_info "removing fast-sources if it exist"
-    chroot "$root" rm -rf  /etc/apt/sources-fast* 
-    log_info "using netselct apt to find fastest sources"
-        chroot "$root" \
-            env -i \
-                HOME="/root" \
-                PATH="/bin:/usr/bin:/sbin:/usr/sbin" \
-                SHELL="/bin/bash" \
-                TERM="$TERM" \
-                DEBIAN_FRONTEND="noninteractive" \
-            netselect-apt  --tests 15 \
-                --sources \
-                --outfile /etc/apt/sources-fast.list \
-            stable
-    log_info "updating apt sources to use fastest servers"
-    chroot "$root" apt-get update
-    log_info "installing whiptail locales wget curl"
-    chroot "$root" \
-        env -i \
-                HOME="/root" \
-                PATH="/bin:/usr/bin:/sbin:/usr/sbin" \
-                TERM="$TERM" \
-                SHELL="/bin/bash" \
-                DEBIAN_FRONTEND="noninteractive" \
-            apt-get --yes \
-                -o DPkg::Options::=--force-confdef \
-                install whiptail locales wget curl 
-    log_info "setting locals to en_US.UTF-8"
-    chroot "$root" \
-        env -i \
-                HOME="/root" \
-                PATH="/bin:/usr/bin:/sbin:/usr/sbin" \
-                TERM="$TERM" \
-                SHELL="/bin/bash" \
-                DEBIAN_FRONTEND="noninteractive" \
-            locale-gen en_US.UTF-8
-    log_info "installing packages"
-    chroot "$root" \
-        env -i \
-                HOME="/root" \
-                PATH="/bin:/usr/bin:/sbin:/usr/sbin" \
-                SHELL="/bin/bash" \
-                TERM="$TERM" \
-                DEBIAN_FRONTEND="noninteractive" \
-            apt-get --yes \
-                -o DPkg::Options::=--force-confdef \
-                install "${main_dependancies[@]}"
-    log_info "upgrading software"
-    chroot "$root" \
-        env -i \
-                HOME="/root" \
-                PATH="/bin:/usr/bin:/sbin:/usr/sbin" \
-                SHELL="/bin/bash" \
-                TERM="$TERM" \
-                DEBIAN_FRONTEND="noninteractive" \
-            apt-get  --yes \
-                -o DPkg::Options::=--force-confdef \
-                upgrade
-    log_info "clearning up after apt ..."
-    chroot "$root" apt-get --yes clean
-    chroot "$root" apt-get --yes autoclean
-    chroot "$root" apt-get --yes autoremove
-    chroot "$root" rm -f /etc/apt/sources-fast.list
-}
 
+    log_info "Setting up keyrings..."
+    # cp "$root/../../distros/arch/pacman-gpg/"* "$root/etc/pacman.d/gnupg"
+    $NSPAWN "$root" pacman-key --init #1> /dev/null 2>&1
+    # $NSPAWN "$root" pacman-key --populate archlinux archlinuxarm manjaro manjaro-arm #1> /dev/null 2>&1
+    $NSPAWN "$root"  pacman-key --populate archlinuxarm  #1> /dev/null 2>&1
+    log_info "binding pkg-cache..."
+    mkdir -p "$root/../pkg-cache"
+    mount -o bind "$root/../pkg-cache" "$root/var/cache/pacman/pkg"
+    # log_info "disabling systemd-resolved service ..."
+    # $NSPAWN "$root" systemctl disable --now systemd-resolved
+    # timedatectl set-timezone
+    # log_info "updating package list ..."
+    $NSPAWN "$root" pacman -Syy
+    # log_info "download base dependancies ..."
+    # $NSPAWN "$root" pacman -S --needed reflector rsync 
+    log_info "setting locals to en_US.UTF-8"
+    $NSPAWN "$root" locale-gen en_US.UTF-8
+    # log_info "setting up auto synchronization of time"
+    # $NSPAWN "$root" timedatectl set-ntp true
+
+    # log_info "Generating mirrorlist..."
+    # manjaro specific
+    $NSPAWN "$root" pacman-mirrors -f10 #1> /dev/null 2>&1
+    log_info "installing packages ..."
+    # $NSPAWN "$root" pacman -Syu
+    $NSPAWN "$root" pacman -Syyu --needed --noconfirm "${main_dependancies[@]}" 
+    log_info "Setting up system settings..."
+    $NSPAWN "$root" chmod u+s /usr/bin/ping #1> /dev/null 2>&1
+    # rm -f "$root/etc/ssl/certs/ca-certificates.crt"
+    # rm -f "$root/etc/ca-certificates/extracted/tls-ca-bundle.pem"
+    # cp -a "/etc/ssl/certs/ca-certificates.crt" "$root/etc/ssl/certs/"
+    # cp -a "/etc/ca-certificates/extracted/tls-ca-bundle.pem" $root/etc/ca-certificates/extracted/
+
+    $NSPAWN "$root" sed -i "s/.*PasswordAuthentication.*/PasswordAuthentication yes/g" /etc/ssh/sshd_config
+    $NSPAWN "$root" sed -i "s/.*PermitRootLogin.*/PermitRootLogin yes/g" /etc/ssh/sshd_config
+
+    log_info "Cleaning install for unwanted files..."
+    umount "$root/root/var/cache/pacman/pkg"
+    rm -rf "$root/usr/bin/qemu-aarch64-static"
+    rm -rf "$root/var/cache/pacman/pkg/*"
+    rm -rf "$root/var/log/*"
+    rm -rf "$root/etc/*.pacnew"
+    rm -rf "$root/usr/lib/systemd/system/systemd-firstboot.service"
+    rm -rf "$root/etc/machine-id"
+}
+function setup_user(){
+    local -r root="$1"
+    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
+    local commands=()
+    log_info "deleting user '$default_user' in case it exists.possibly rememnants of faulty partial chroot setup."
+    commands+=("")
+    $NSPAWN  "$root" deluser --remove-home "${default_user}" > /dev/null 2>&1 || true
+    $NSPAWN  "$root" useradd -l -G sudo,adm -md "/home/$default_user" -s /bin/bash -p password "$default_user"
+}
+# TODO repeat
 function hostname_setup(){
     local -r root="$1"
     local -r host="$2"
@@ -222,40 +224,42 @@ function hostname_setup(){
     log_info "creating parent directory $dir"
     mkdir -p "$dir"
 cat > "$target" <<EOF
-    127.0.0.1       localhost
-    ::1             localhost ip6-localhost ip6-loopback
-    ff02::1         ip6-allnodes
-    ff02::2         ip6-allrouters
-    127.0.1.1       $host_name
+$host
 EOF
-    chroot "$root" env -i /bin/hostname hostname
+}
+# TODO repeat
+function timezone_setup(){
+    local -r root="$1"
+    local -r zone="$2"
+    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
+    assert_not_empty "zone" "${zone+x}" "time zone must be set"
+    log_info "setting timezone to $zone"
+    # $NSPAWN  "$root" timedatectl set-timezone $zone
+    local -r target="$root/etc/timezone"
+    local -r dir="$(dirname "$target")"
+    log_info "creating parent directory $dir"
+    mkdir -p "$dir"
+    echo "$zone" > "$target"
+    $NSPAWN "$root" ln -sf /usr/share/zoneinfo/"$zone" /etc/localtime #1> /dev/null 2>&1
 }
 
 function enable_systemd_services(){
     local -r root="$1"
     assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
     shift;
+    $NSPAWN "$root" systemctl daemon-reload
+    $NSPAWN "$root" systemctl enable getty.target haveged.service 
     local -r services="$1"
     for i in "${services[@]}"; do
         log_info "enabling service $i"
-        chroot "$root" \
-        env -i HOME="/root" \
-            PATH="/bin:/usr/bin:/sbin:/usr/sbin" \
-            TERM="$TERM" \
-            systemctl enable "$i"
+        $NSPAWN "$root" systemctl enable --now "$i"
     done
+    if [ -f "$root/usr/bin/xdg-user-dirs-update" ]; then
+        $NSPAWN "$root" systemctl --global enable xdg-user-dirs-update.service 1> /dev/null 2>&1
+    fi
 
 }
-function setup_user(){
-    local -r root="$1"
-    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
-    local commands=()
-    log_info "deleting user '$default_user' in case it exists.possibly rememnants of faulty partial chroot setup."
-    commands+=("")
-    chroot "$root" deluser --remove-home "${default_user}" > /dev/null 2>&1 || true
-    chroot "$root" useradd -l -G sudo,adm -md "/home/$default_user" -s /bin/bash -p password "$default_user"
-
-}
+# TODO repeat
 function keyboard_setup(){
     log_info "Adding Keyboard to LightDM"
     local -r root="$1" 
@@ -281,6 +285,7 @@ Section "InputClass"
 EndSection
 EOF
 }
+# TODO repeat
 function wifi_setup(){
     log_info "setting up Wi-Fi connection"
     local -r root="$1"
@@ -316,7 +321,7 @@ dns-search=
 method=auto
 EOF
 }
-
+# TODO repeat
 function setup_alarm(){
     log_info "setting up alarm"
     local -r root="$1"
@@ -330,7 +335,7 @@ kitty &
 onboard &
 EOF
 }
-
+# TODO repeat
 function setup_bcm4354(){
     log_info "Adding BCM4354.hcd"
     local -r root="$1"
@@ -343,14 +348,7 @@ function setup_bcm4354(){
     log_info "downloading $url"
     wget -O "$target" "$url"
 }
-function cleanup(){
-    log_info "Cleaning up ...."
-    local -r root="$1"
-    assert_not_empty "root" "${root+x}" "root filesystem directory is needed"
-    local -r target="$root/var/cache"
-    chroot "$root" rm -rf "$target"
-    chroot "$root" mkdir -p "$target"
-}
+
 function tar_archive(){
     local -r root="$1"
     log_info "archiving '$root' to '$root.tar.gz'"
@@ -360,25 +358,20 @@ function tar_archive(){
     popd >/dev/null 2>&1
     rm -rf "$root"
 }
+    # pushd "$root" >/dev/null 2>&1
+    # [[ "$?" != 0 ]] && popd
+    # popd >/dev/null 2>&1
 ############################################# start ###############################################
-function build_debian(){
-    export DEBIAN_FRONTEND=noninteractive
-    export DEBCONF_NONINTERACTIVE_SEEN=true
+function build_arch(){
     local arch="$1";
     if [[  $(string_is_empty_or_null "${arch+x}") ]]; then
         arch="${supported_archs[0]}"
         log_warn "Architecture was not given ! Using default";
     fi
     shift;
-    local  code_name="$1";
-    if [[  $(string_is_empty_or_null "${code_name+x}") ]]; then
-        code_name="${supported_codenames[0]}"
-        log_warn "Code name was not given! Using '$code_name'";
-    fi
-    shift;
     local -r root="$1"
     shift;
-    local host_name="$1"
+    local  host_name="$1"
         if [[  $(string_is_empty_or_null "${host_name+x}") ]]; then
         host_name=default_host_name
         log_warn "hostname was not given! Using default";
@@ -403,10 +396,11 @@ function build_debian(){
         log_warn "wifi password was not given! Using default";
     fi
     shift;
+    umount "$root/root/var/cache/pacman/pkg" || true
+
     echo "*******************************************************************************************"
     echo "*                                                                                         *"
-    log_info "Building Debian Root File System In chroot"
-    log_info "Codename: $code_name"
+    log_info "Building Arch Linux Root File System In with systemd-nspawn"
     log_info "Architecture: $arch"
     log_info "Host Name: $host_name"
     log_info "timezone: $time_zone"
@@ -416,6 +410,7 @@ function build_debian(){
     echo "*******************************************************************************************"
 
     local -r systemd_services=(
+        "sshd"
         "NetworkManager"
         "lightdm"
         "bluetooth"
@@ -427,20 +422,18 @@ function build_debian(){
     fi
     log_info "setting ownership of '$root' to '$UID'  "
     chown -R "$UID:$UID" "$root" || true >/dev/null 2>&1
-    prepare_rootfs "$root" "$arch" "$code_name"
-    setup_mounts "$root"
-    timezone_setup "$root" "${time_zone}"
+    prepare_rootfs "$root" "$arch"
+    setup_nameserver "$root"
     hostname_setup "$root" "${host_name}"
+    timezone_setup "$root" "${time_zone}"
     install_packages "$root"
     setup_user "$root"
     enable_systemd_services "$root" "${systemd_services[@]}"
     keyboard_setup "$root"
     wifi_setup "$root" "${wifi_ssid}" "${wifi_password}" 
     setup_alarm "$root"
-    # setup_bcm4354 "$root"
-    cleanup "$root"
-    log_info "leaving chroot"
-    teardown_mounts "$root"  
+    setup_bcm4354 "$root"
+
     chown -R 0:0 "$root/"
     chown -R "$default_user_id":"$default_user_id" "$root/home/$default_user" || true
     chown -R "$default_user_id":"$default_user_id" "$root/home/alarm" || true
@@ -453,28 +446,20 @@ function build_debian(){
     chmod +s "$root/bin/mount" || true
     chmod +s "$root/bin/su" || true
     tar_archive "$root"
-    unset DEBIAN_FRONTEND
-    unset DEBCONF_NONINTERACTIVE_SEEN
-    # 
     log_info "RootFS generation completed and stored at '$root.tar.gz'"
 }
-
 function help() {
     echo
     echo "Usage: [$(basename "$0")] [OPTIONAL ARG] [COMMAND | COMMAND <FLAG> <ARG>]"
     echo
     echo
-    echo -e "[Synopsis]:\tBuilds debian Root File System"
+    echo -e "[Synopsis]:\tBuilds Arch Linux Root File System"
     echo
     echo "Optional Flags:"
     echo
     echo -e "  --arch\t\tTarget CPU Architecture."
     echo -e "  \t\t\t+[available options] : ${supported_archs[@]}"
     echo -e "  \t\t\t+[default] : '${supported_archs[0]}'"
-    echo
-    echo -e "  --codename\t\tdebian codename."
-    echo -e "  \t\t\t+[available options] : ${supported_codenames[@]}"
-    echo -e "  \t\t\t+[default] : '${supported_codenames[0]}'"
     echo
     echo -e "  --root-dir\t\tfile system root directory."
     echo -e "  \t\t\t+[default] : '${default_root}'"
@@ -494,7 +479,6 @@ function help() {
     echo "Example:"
     echo
     echo "  sudo $(basename "$0") --arch ${supported_archs[0]} \ "
-    echo "                        --codename ${supported_codenames[0]} \ "
     echo "                        --build-dir \$(pwd)/build \ "
     echo "                        --wifi-ssid my-fast-wifi \ "
     echo "                        --wifi-password my-super-secret-password"
@@ -507,7 +491,6 @@ function main() {
         exit 1
     fi
     local arch=""
-    local code_name=""
     local root_dir=""
     local host_name=""
     local time_zone=""
@@ -519,10 +502,6 @@ function main() {
         --arch)
             shift
             arch="$1"
-            ;;
-        --codename)
-            shift
-            code_name="$1"
             ;;
         --root-dir)
             shift
@@ -555,7 +534,8 @@ function main() {
         esac
         shift
     done 
-    build_debian "$arch" "$code_name" "$root_dir" "$host_name" "$time_zone" "$wifi_ssid" "$wifi_password"
+    clean_up_container
+    build_arch "$arch" "$root_dir" "$host_name" "$time_zone" "$wifi_ssid" "$wifi_password"
     exit
 }
 
@@ -568,29 +548,3 @@ else
         exit $?
     fi
 fi
-
-
-# OLDPATH="$PATH"
-# if [ -z "$KBD_BT_ADDR" ]; then
-#   log_info "Configuring BT Keyboard"
-#   cat > $rootfs_dir/etc/btkbd.conf <<EOF
-# BTKBDMAC = ''$KBD_BT_ADDR''
-# EOF
-#   log_info "=> Adding BT Keyboard service"
-#   cat > $rootfs_dir/etc/systemd/system/btkbd.service <<EOF
-# [Unit]
-# Description=systemd Unit to automatically start a Bluetooth keyboard
-# Documentation=https://wiki.archlinux.org/index.php/Bluetooth_Keyboard
-# ConditionPathExists=/etc/btkbd.conf
-# ConditionPathExists=/usr/bin/bluetoothctl
-
-# [Service]
-# Type=oneshot
-# EnvironmentFile=/etc/btkbd.conf
-# ExecStart=/usr/bin/bluetoothctl connect ${BTKBDMAC}
-
-# [Install]
-# WantedBy=bluetooth.target
-# EOF
-#   run_in_qemu systemctl enable btkbd
-# fi
